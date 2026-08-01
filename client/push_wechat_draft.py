@@ -53,11 +53,15 @@ def build_multipart(fields, files):
 
 
 def main():
+    # 用法: python push_wechat_draft.py <文章HTML> <云托管公网域名> [--cover <封面文件>]
     if len(sys.argv) < 3:
-        print("用法: python push_wechat_draft.py <文章HTML> <云托管公网域名>")
+        print("用法: python push_wechat_draft.py <文章HTML> <云托管公网域名> [--cover <封面文件>]")
         sys.exit(1)
     html_path = os.path.abspath(sys.argv[1])
     endpoint = sys.argv[2].rstrip("/")
+    cover_arg = None
+    if len(sys.argv) >= 5 and sys.argv[3] == "--cover":
+        cover_arg = os.path.abspath(sys.argv[4])
     if not os.path.exists(html_path):
         print("文件不存在:", html_path)
         sys.exit(1)
@@ -99,11 +103,14 @@ def main():
         body = body.replace('src="%s"' % src, 'src="{{img%d}}"' % i, 1)
         files.append(("images", fpath, os.path.basename(fpath)))
 
-    # 封面：第一张存在的本地图同时作为 cover 上传（公众号草稿必须有封面 thumb_media_id）
-    if files:
+    # 封面：优先用 --cover 指定的封面文件；未指定则用第一张正文图兜底
+    if cover_arg and os.path.exists(cover_arg):
+        files.insert(0, ("cover", cover_arg, os.path.basename(cover_arg)))
+        print("封面: %s (指定)" % os.path.basename(cover_arg))
+    elif files:
         cover = files[0][1]
         files.insert(0, ("cover", cover, os.path.basename(cover)))
-        print("封面:", os.path.basename(cover))
+        print("封面: %s (第一张图兜底)" % os.path.basename(cover))
 
     fields = {"title": title, "content": body}
     data, boundary = build_multipart(fields, files)
