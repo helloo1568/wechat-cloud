@@ -13,6 +13,7 @@
      （此模式需要把出口 IP 加入公众号白名单）。
 """
 import os
+import json
 import time
 import requests
 from flask import Flask, request, jsonify
@@ -112,7 +113,14 @@ def push():
     }
     if thumb_media_id:
         article["thumb_media_id"] = thumb_media_id
-    r = wx_post("/cgi-bin/draft/add", json={"articles": [article]})
+    # 关键：requests 的 json= 默认 ensure_ascii=True 会把中文转成 \uXXXX，
+    # 微信端会按字面显示乱码（如 \u8fd8）。必须手动 ensure_ascii=False。
+    payload = json.dumps({"articles": [article]}, ensure_ascii=False).encode("utf-8")
+    r = wx_post(
+        "/cgi-bin/draft/add",
+        data=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
     d = r.json()
     if d.get("media_id"):
         return jsonify({"ok": True, "media_id": d["media_id"]})
