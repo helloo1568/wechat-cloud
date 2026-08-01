@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import uuid
+import base64
 import mimetypes
 import urllib.request
 
@@ -68,8 +69,28 @@ def main():
 
     base_dir = os.path.dirname(html_path)
     files = []
+    tmp_files = []
     for i, src in enumerate(img_srcs, 1):
-        if src.startswith(("http://", "https://", "data:")):
+        if src.startswith("data:"):
+            # data:image/png;base64,XXXX  -> 解码为临时文件参与上传
+            m = re.match(r"data:image/([a-z0-9.+-]+);base64,(.+)", src, re.S)
+            if not m:
+                continue
+            mime = m.group(1).lower()
+            ext = "png" if "png" in mime else ("gif" if "gif" in mime else "jpg")
+            try:
+                raw = base64.b64decode(m.group(2))
+            except Exception:
+                print("跳过无法解码的内嵌图:", src[:40])
+                continue
+            fpath = os.path.join(base_dir, ".wx_tmp_%d.%s" % (i, ext))
+            with open(fpath, "wb") as f:
+                f.write(raw)
+            tmp_files.append(fpath)
+            body = body.replace('src="%s"' % src, 'src="{{img%d}}"' % i, 1)
+            files.append(("images", fpath, "img%d.%s" % (i, ext)))
+            continue
+        if src.startswith(("http://", "https://")):
             continue
         fpath = src if os.path.isabs(src) else os.path.join(base_dir, src)
         if not os.path.exists(fpath):
@@ -78,10 +99,16 @@ def main():
         body = body.replace('src="%s"' % src, 'src="{{img%d}}"' % i, 1)
         files.append(("images", fpath, os.path.basename(fpath)))
 
+    # 封面：第一张存在的本地图同时作为 cover 上传（公众号草稿必须有封面 thumb_media_id）
+    if files:
+        cover = files[0][1]
+        files.insert(0, ("cover", cover, os.path.basename(cover)))
+        print("封面:", os.path.basename(cover))
+
     fields = {"title": title, "content": body}
     data, boundary = build_multipart(fields, files)
     print("标题:", title)
-    print("正文图:", len(files), "张")
+    print("正文图:", len(files) - 1, "张（含封面 1 张）")
 
     req = urllib.request.Request(
         endpoint + "/push",
@@ -89,8 +116,16 @@ def main():
         method="POST",
         headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary},
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        print(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            print(resp.read().decode("utf-8"))
+    finally:
+        # 清理 base64 解码的临时图片
+        for t in tmp_files:
+            try:
+                os.remove(t)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
